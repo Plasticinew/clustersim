@@ -56,7 +56,7 @@ class Server:
         self.L = L
         self.checkin(max_cpus, max_mem, remotemem, uniform_policy, use_fastswap, 
                      min_ratio, workload_ratios, reclamation_cpus)
-        self.path = '/users/YuqiLi/clustersim/res/{}-6servers-32G.txt'.format(sid)
+        self.path = '/mydata/clustersim/res/{}-4servers-32G-fastswap.txt'.format(sid) if use_fastswap else '/mydata/clustersim/res/{}-4servers-directswap.txt'
         self.res_file = open(self.path, 'w')
         self.max_remote_mem = max_remote_mem
 
@@ -125,7 +125,7 @@ class Server:
             assert self.alloc_mem <= self.total_mem
             ratios = None
         
-        self.res_file.write(str(max(self.alloc_mem - self.total_mem,0)) + '\n')
+        #self.res_file.write(str(max(self.alloc_mem - self.total_mem,0)) + '\n')
 
         self.update_all_new(self.executing, new_idd, ratios)
         self.last_time = cur_time
@@ -360,7 +360,7 @@ def update_server_seq(default_seq,server_seq):
     server_seq = default_seq[:]
     random.shuffle(server_seq)
 
-def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts):
+def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, until):
     Pending = dict() #key is wname, value is a list of workloads and timestamp of that name in pending
     global cur_time
     default_seq = list(range(len(servers)))
@@ -368,15 +368,26 @@ def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts):
     far_mem_usage = []
     local_mem_usage = []
     avail_list = []
+    until = until / 1000
+    id = 200 / (until/ 60)
+    mem_usage_path = '/mydata/clustersim/res/fastswap_{}.txt'.format(id) if use_fastswap else '/mydata/clustersim/res/directswap_{}.txt'.format(id)
+    mem_usage_file = open(mem_usage_path, 'w')
 
     memutil_servers = []
 
     for s in servers:
         memutil_servers.append([])
 
+    prev_time_second = 0
+    prev_remote_mem_useage = 0
+
     while not L.is_empty():
         timestamp, event = L.next_event()
         cur_time = timestamp
+        cur_time_second = int(timestamp / 1000)
+        for i in range(prev_time_second, cur_time_second):
+            mem_usage_file.write(str(prev_remote_mem_useage) + '\n')
+
         my_print('timestamp: {} ms'.format(cur_time))
         if event.start: # start node
             workload = event.event_to_workload(workload_ratios)
@@ -417,6 +428,13 @@ def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts):
         for s in servers:
             memutil_servers[s.sid].append(max(s.alloc_mem - s.total_mem,0))
         
+        prev_time_second = cur_time_second
+        if use_fastswap:
+            prev_remote_mem_useage = 32768 * len(servers)
+        else:
+            prev_remote_mem_useage = 0
+            for s in servers:
+                prev_remote_mem_useage += max(s.alloc_mem - s.total_mem,0)
 
         my_print('')
 
@@ -494,7 +512,7 @@ def simulate(seed, mem, size, until, ratios, workload, cpus, num_servers, remote
         servers.append(Server(sid, L, remotemem, cpus, mem,
                               uniform, use_fastswap, min_ratio, workload_ratios, reclamation_cpus, max_far/num_servers))
     try:
-        return schedule(servers, L, workload_ratios, max_far, jobs_ts)
+        return schedule(servers, L, workload_ratios, max_far, jobs_ts, use_fastswap, until)
     except KeyboardInterrupt:
         for s in servers[:]:
             del s

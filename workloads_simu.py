@@ -91,18 +91,51 @@ class Workload:
 
 class Quicksort(Workload):
     wname = "quicksort"
-    ideal_mem = 10300
-    min_ratio = 0.7
+    ideal_mem = 20490
+    min_ratio = 0.6
     min_mem = int(min_ratio * ideal_mem)
     cpu_req = 1
-    x = [1,      0.9,    0.8,   0.7,    0.6]
-    y = [248.75, 260.41, 268.4, 280.11, 300.78]
-    coeff = [-895.83333333, 1814.16666667, -719.04166667, -586.04166667,  635.5]
+    x = [1,      0.9,    0.8,   0.7,    0.6,    0.5]
+    y = [503.75, 520.41, 533.69, 547.11, 561.2, 584.78]
+    coeff = [1104.1666666663175, -3923.0555555545757, 5092.958333332335, -3006.2837301582927, 1236.0090476189782]
+
+class Kmeans(Workload):
+    wname = "kmeans"
+    ideal_mem = 24100
+    min_ratio = 0.75
+    min_mem = int(min_ratio * ideal_mem)
+    binary_name = "python"
+    cpu_req = 1
+    x = [1,      0.9,    0.8,    0.7,    0.6,    0.5,    0.4,    0.3,    0.2]
+    y = [138.51, 141.20, 147.38, 158.21, 162.93, 176.12, 186.03, 205.46, 230.85]
+    coeff = [ 481.87645687647574, -1307.429422429461, 1358.8100233100513, -726.6385845635926, 331.7427777777785]
+
+class WordCount(Workload):
+    wname = "wordcount"
+    ideal_mem = 33000
+    min_ratio = 0.75
+    min_mem = int(min_ratio * ideal_mem)
+    binary_name = "wordcount"
+    cpu_req = 1
+    x = [1,      0.9,    0.8,   0.7,    0.6,    0.5]
+    y = [128.75, 140.41, 148.4, 163.11, 172.38, 185.2]
+    coeff = [-291.6666666667545, 878.5185185188021, -953.0000000003355, 326.7612433864154, 168.3103174602853]
+
+class LinearRegression(Workload):
+    wname = "linearregression"
+    ideal_mem = 18200
+    min_ratio = 0.8
+    min_mem = int(min_ratio * ideal_mem)
+    binary_name = "lr"
+    cpu_req = 1
+    x = [1,      0.9,    0.8,    0.7,    0.6,    0.5]
+    y = [183.75, 204.41, 226.34, 258.11, 290.78, 343.77]
+    coeff = [2260.4166666660253, -7414.861111109326, 9266.520833331537, -5481.367460316681, 1553.223095237974]
 
 class Xgboost(Workload):
     wname = "xgboost"
     ideal_mem = 16300
-    min_ratio = 0.5
+    min_ratio = 0.65
     min_mem = int(min_ratio * ideal_mem)
     cpu_req = 2
     x = [1,      0.9,    0.8,    0.7,    0.6,    0.5,    0.4,    0.3,    0.2]
@@ -122,7 +155,7 @@ class Xsbench(Workload):
 class Snappy(Workload):
     wname = "snappy"
     ideal_mem = 34000
-    min_ratio = 0.8
+    min_ratio = 0.75
     min_mem = int(min_ratio * ideal_mem)
     cpu_req = 1
     x = [1,      0.9,    0.8,    0.7,    0.6]
@@ -157,4 +190,7 @@ def get_workload_class(wname):
             'xsbench': Xsbench,
             'pagerank': Pagerank,
             'snappy': Snappy,
-            'redis': Redis}[wname]
+            'redis': Redis,
+            'wordcount': WordCount,
+            'linearregression': LinearRegression,
+            'kmeans': Kmeans}[wname]
