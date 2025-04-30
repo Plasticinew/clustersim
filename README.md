@@ -19,6 +19,8 @@ Our modified simulator employs distinct job admission policies for FastSwap and 
 
 # Run Experiment
 
+The simulator requires several command-line arguments to execute, with complete usage examples available in `run.sh`. This section focus on reproducing the results corresponding to Figure 16 in our paper.
+
 ## Prerequisites
 
 Install the required Python dependencies for simulation and plotting:
