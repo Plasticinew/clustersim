@@ -1,7 +1,1 @@
 matched
-*.txt
-*.png
-figures/*.png
-figures/*.pdf
-large_traces/*.txt
-remote_mem_usage/*.txt
