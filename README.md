@@ -1,6 +1,23 @@
-# Artifact Overview
+# Overview
 
-This simulator is an improved implementation based on [the open-source simulator](https://github.com/clusterfarmem/clustersim.git) of FastSwap (EuroSys'20), designed to conveniently reproduce the experimental results of the swap system presented in the paper.
+This simulator is an improved implementation based on [the open-source simulator](https://github.com/clusterfarmem/clustersim.git) of FastSwap (EuroSys'20), designed to conveniently reproduce the experimental results of the swap system presented in the paper. 
+
+This README file is divided into two sections: The first section briefly introduces how the simulator works and what is the differnence when simulating FastSwap and FineMem-Swap. The second section illustrates how to reproduce our experimental results.
+
+# Introduction
+
+## DM swap systems simulator
+The simulator employs a centralized job scheduler to allocate jobs and utilizes multiple simulated compute nodes to model job execution. Upon job arrival, the scheduler applies a customized admission policy to identify a suitable compute node for execution. If no eligible node is available, the job is queued and reconsidered for deployment upon subsequent job completion events. Each compute node dynamically adjusts memory configurations (local-remote memory ratios) for its assigned jobs based on pre-profiled performance degradation data, thereby simulating application execution progress. The accuracy of this simulation has been validated by FastSwap.
+
+## Job Admission Policy
+Our re-implementated simulator employs distinct job admission policies for FastSwap and FineMem-Swap:
+* For FastSwap, the scheduler’s admission policy for unscheduled job is: a compute node exists where the job can be accommodated
+without exceeding its fixed remote memory usage (the pre-registered remote swap partition size, 32GB in our setting).
+* For FineMem-Swap, the scheduler’s admission policy for unscheduled job is: a compute node exists where accommodating the job keeps the total remote memory usage of the entire cluster within total remote memory size (number of compute nodes times 32GB in our setting).
+
+
+
+# Run Experiment
 
 ## Pre-requisites
 Install the required python dependencies for simulation and plotting.
@@ -11,29 +28,21 @@ sudo apt update && sudo apt install python3-pip
 pip install numpy, scipy, sortedcollections, matplotlib
 ```
 
-## `start_simulations.py`
-`start_simulations.py` is the start point from which you can run various rack scale simulations. It accepts multiple arguments, but you can generate the large scale simulation results we presented in our paper (Figure 7, 8 and 9) with the default configuration:
-```
-python3 start_simulations.py 
-```
-This would run the default large-scale simulation where the amount of far memory and additional local memory vary, the results would be written in a text file stored in results/results_192G_48cores.
+## Remote Memory Usage
+To reproduce FineMem in Figure 16(a), enter `clustersim/` and run 
 
-### Other Arguments
-Argument            | Description
---------------------------------|---------------------------------------------
---num_random, -n           | Number of randomly generated workloads.
---limits, -l       | Limits of m2c.
---cpu, -c | Number of cpu per machine.
---mem, -m              | Amount of memory per machine (unit is MB). 
---jps, -j            | Number of jobs per server.
---filename, -f           | Filename for final results.
---simu_name, -s            | Name of the simulation loop function.
---use_small_workload           | To use small workload.
+```sh
+python draw_remote_mem_usage.py <random_seed>
 
-## `simulation_one_time.py` and `test.sh`
-`simulation_one_time.py` allows you to run single simulation with small workloads. `test.sh` contains examples usage of `simulation_one_time.py`. `test.sh` requires two parameters: seed to generate workload and amount of far memory. Here is an example usage:
+# example: python draw_remote_mem_usage.py 2025
 ```
-./test.sh 2000 32768 
-```
-## Questions
-For additional questions please contact us at cfm@lists.eecs.berkeley.edu
+
+`random_seed` is an interger to . The script firstly generates a tarce containing 200 jobs (XGBoost:Snappy:Redis=2:2:1), simulates it on both FastSwap and FineMem-Swap with 5 compute nodes and print the corresponding remote memory usage (results are in `clustersim/remote_mem_usage`). Then, the script draws the corresponding experimental result figure in `clustersim/figures/remote_mem_usage.png`.
+
+
+
+## Throughput Imporvement
+`gen_small_traces.py` will randomly generate 500 traces, each containing 200 jobs, and simulate the processing of these traces  on both FastSwap and FineMem-Swap with 5 compute nodes. The comparative results for each trace are output in real time to `clustersim/small_traces/`. `gen_large_traces.py` operates similarly, randomly generating and simulating 500 traces with 10,000 jobs each with 40 compute nodes, and outputs the results to `clustersim/large_traces/`.
+
+To reproduce FineMem in Figure 16(b), enter `clustersim/` and run `python gen_small_traces.py` and `python gen_large_traces.py` respectively. After execution, run `python draw_throughput_improvement_cdf.py` to draw the corresponding experimental result figure in `clustersim/figures/throughput_improvement.png`. Note that the simulation may require significant execution time (particularly for large traces), allowing partial intermediate results to be plotted before all simulations complete.
+
