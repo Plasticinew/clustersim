@@ -6,12 +6,10 @@ import math
 import os
 
 
-#workload1 = ['pagerank', 'xsbench']
-#workload2 = [ 'xgboost', 'snappy', 'redis']
+
 selected_workloads = ['xgboost', 'snappy', 'redis']
-f1 = open('small_traces/FineMemSwap.txt', 'w')
-f2 = open('small_traces/FastSwap.txt', 'w')
-f3 = open('small_traces/res.txt', 'w')
+f1 = open('small_traces/detailed_res.txt', 'w')
+f2 = open('small_traces/res.txt', 'w')
 
 max_far = 163840
 
@@ -59,10 +57,9 @@ for i in range(500):
     output1 = output1.decode("utf-8").strip()
     output2 = output2.decode("utf-8").strip()
 
-    f1.write(str(trace) + '\n')
-    f2.write(str(trace2) + '\n')
-    f3.write('{}'.format(float(output2)/float(output1)) + ' \n')  
+    f1.write('Workloads:{}'.format(selected_workloads) + ' ' + 'seed:{}'.format(rand) + ' ' + \
+             ':'.join(map(str, workload_ratios)) + '\t  FineMem-Swap:{}, FastSwap:{} \n'.format( int(output1), int(output2)))
+    f2.write('{}'.format(float(output2)/float(output1)) + ' \n')  
 
     f1.flush()
     f2.flush()
-    f3.flush() 

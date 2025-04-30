@@ -23,7 +23,7 @@ l2 = plt.plot(data_large, p2, color='#f47721', linewidth=4)
 l1_patch = mpatches.Patch(color='#00a78e', label='200 jobs')
 l2_patch = mpatches.Patch(color='#f47721', label='10000 jobs')
 
-plt.xlim([-0.06, 0.23]) 
+plt.xlim([-0.06, 0.25]) 
 plt.xlabel('Improvement')
 
 plt.legend(handles=[l1_patch, l2_patch])
