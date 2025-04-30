@@ -6,30 +6,23 @@ import subprocess
 
 max_far = 1310720
 
-workload1 = ['pagerank', 'xsbench']
+
 workload2 = ['xgboost', 'redis', 'snappy']
 
 
-
-
-#f1 = open('mr_res/random_large_trace.sh', 'w')
-f1 = open('mr_res/res3_large2.txt', 'w')
-f2 = open('mr_res/trace2.txt', 'w')
+f1 = open('large_traces/res.txt', 'w')
+f2 = open('large_traces/detailed_res.txt', 'w')
 
 
 
 
-
-
-
-for i in range(5000):
-    selected_workloads = workload2 + workload1
+for i in range(500):
+    selected_workloads = workload2
     min_time = min(workloads.get_workload_class(w).y[0] for w in selected_workloads)
     min_mem = min(workloads.get_workload_class(w).ideal_mem for w in selected_workloads)
     #workload_values = [(min_time / workloads.get_workload_class(w).y[0]) * (min_mem / workloads.get_workload_class(w).ideal_mem) * (0.3 + 1 - workloads.get_workload_class(w).min_ratio) for w in selected_workloads]
-    workload_values = [random.uniform(0.8, 1.2) * (workloads.get_workload_class(w).ideal_mem / min_mem) * (random.uniform(0.01,0.2) + (1 - workloads.get_workload_class(w).min_ratio) if workloads.get_workload_class(w).min_ratio < 1 else random.uniform(0.05,0.25)) for w in selected_workloads]
-    #print(workload_values)
-    
+    workload_values2 = [random.uniform(1.6, 2.4) for w in workload2]
+    workload_values = [random.uniform(1, 3) for w in workload2]
     total_value = sum(workload_values)
     workload_ratios = [round(1000 * v / total_value) for v in workload_values]
 
@@ -44,7 +37,7 @@ for i in range(5000):
     workload_min_ratios = [int(workloads.get_workload_class(w).min_ratio * 100) for w in selected_workloads]
     randseed = random.randint(1,10000)
 
-    cmd = 'python simulation_one_time.py' + ' ' + '{}'.format(randseed) + ' ' + '--num_servers 40 --cpus 32 --mem 81920' + ' '\
+    cmd = 'python simulation_one_time.py' + ' ' + '{}'.format(randseed) + ' ' + '--num_servers 40 --cpus 64 --mem 81920' + ' '\
             + '--workload ' + ','.join(selected_workloads) + '   ' + '--use_shrink' + ' '\
             + '--ratios ' + ':'.join(map(str, workload_ratios)) + ' ' \
             + '--workload_ratios ' + ','.join(map(str, workload_min_ratios)) + ' '\
@@ -63,6 +56,6 @@ for i in range(5000):
     #print(output2)
     f1.write('{}'.format(float(output2)/float(output1)) + ' \n')   
     f2.write('Workloads:{}'.format(selected_workloads) + ' ' + 'seed:{}'.format(randseed) + ' ' + \
-             ':'.join(map(str, workload_ratios)) + '\t  MrAllocSwap:{}, FastSwap:{} \n'.format( int(output1), int(output2)))
+             ':'.join(map(str, workload_ratios)) + '\t  FineMem-Swap:{}, FastSwap:{} \n'.format( int(output1), int(output2)))
     f1.flush()
     f2.flush()

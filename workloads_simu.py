@@ -89,35 +89,15 @@ class Workload:
     def mem_gradient(self,ratio):
         return self.compute_ratio_from_coeff(self.mem_gd_coeff, ratio)
 
-class Quicksort(Workload):
-    wname = "quicksort"
-    ideal_mem = 10300
-    min_ratio = 0.7
-    min_mem = int(min_ratio * ideal_mem)
-    cpu_req = 1
-    x = [1,      0.9,    0.8,   0.7,    0.6]
-    y = [248.75, 260.41, 268.4, 280.11, 300.78]
-    coeff = [-895.83333333, 1814.16666667, -719.04166667, -586.04166667,  635.5]
-
 class Xgboost(Workload):
     wname = "xgboost"
     ideal_mem = 16300
     min_ratio = 0.5
     min_mem = int(min_ratio * ideal_mem)
-    cpu_req = 2
+    cpu_req = 6
     x = [1,      0.9,    0.8,    0.7,    0.6,    0.5,    0.4,    0.3,    0.2]
     y = [338.45, 341.90, 347.52, 349.21, 352.98, 356.92, 386.09, 405.70, 430.11]
     coeff = [ -876.04895105,  1878.74643875, -1148.56526807,    25.39511137, 457.79055556]
-
-class Xsbench(Workload):
-    wname = "xsbench"
-    ideal_mem = 33300
-    min_ratio = 1
-    min_mem = int(min_ratio * ideal_mem)
-    cpu_req = 8
-    x = [1, 0.9, 0.8]
-    y = [244.91, 478.54, 10000.0]
-    coeff = [-1984.129, 4548.033, -3588.554, 1048.644, 252.997]
 
 class Snappy(Workload):
     wname = "snappy"
@@ -128,16 +108,6 @@ class Snappy(Workload):
     x = [1,      0.9,    0.8,    0.7,    0.6]
     y = [134.88, 143.15, 155.37, 211.18, 274.42]
     coeff = [-31583.33333335,  100776.66666673, -118088.66666675,   59796.08333338, -10765.87000001]
-
-class Pagerank(Workload):
-    wname = "pagerank"
-    ideal_mem = 18900
-    min_ratio = 1
-    min_mem = int(min_ratio * ideal_mem)
-    cpu_req = 8
-    x = [1,      0.9,    0.8]
-    y = [221.06, 736.29, 99900000.00]
-    coeff = [-1617.416, 3789.953, -2993.734, 1225.477]
 
 class Redis(Workload):
     wname = "redis"
@@ -152,9 +122,6 @@ class Redis(Workload):
     coeff = [-15116.5530303,   39869.43181818, -36322.85416666,  12154.9931277, 739.06764286]
 
 def get_workload_class(wname):
-    return {'quicksort': Quicksort,
-            'xgboost': Xgboost,
-            'xsbench': Xsbench,
-            'pagerank': Pagerank,
+    return {'xgboost': Xgboost,
             'snappy': Snappy,
             'redis': Redis}[wname]

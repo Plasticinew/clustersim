@@ -36,9 +36,10 @@ def main():
                         help='ratios for each workload')
     parser.add_argument('--use_shrink', action='store_true', help='use optimization based shrinking')
     parser.add_argument('--use_fastswap', action='store_true', help='use fastswap')
+    parser.add_argument('--print_mem', action='store_true', help='use fastswap')
 
     cmdargs = parser.parse_args()
-    makespan = simulate(cmdargs.seed, cmdargs.mem, cmdargs.size, cmdargs.until, cmdargs.ratios, cmdargs.workload, cmdargs.cpus, cmdargs.num_servers, cmdargs.remotemem, list(map(float,cmdargs.workload_ratios)), max_far=cmdargs.max_far, use_shrink=cmdargs.use_shrink, uniform=False, min_ratio=cmdargs.min_ratio, use_small_workload=False, use_fastswap=cmdargs.use_fastswap)
+    makespan = simulate(cmdargs.seed, cmdargs.mem, cmdargs.size, cmdargs.until, cmdargs.ratios, cmdargs.workload, cmdargs.cpus, cmdargs.num_servers, cmdargs.remotemem, list(map(float,cmdargs.workload_ratios)), max_far=cmdargs.max_far, use_shrink=cmdargs.use_shrink, uniform=False, min_ratio=cmdargs.min_ratio, use_small_workload=False, use_fastswap=cmdargs.use_fastswap, print_mem=cmdargs.print_mem)
     #print('Makespan is {} ms, with {} jobs({})'.format(makespan, cmdargs.size, cmdargs.workload))
     print('{}'.format(makespan))
 
