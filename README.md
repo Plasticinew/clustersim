@@ -14,7 +14,7 @@ The simulator utilizes multiple simulated compute nodes to model job execution a
 
 Our modified simulator employs distinct job admission policies for FastSwap and FineMem-Swap:
 
-- **FastSwap**: A job is admitted if there exists a compute node that can accommodate it without exceeding its fixed remote memory usage (32 GB per node in our setting).
+- **FastSwap**: A job is admitted if there exists a compute node that can accommodate it without exceeding the fixed per-node remote memory usage limitation (32 GB per node in our setting).
 - **FineMem-Swap**: A job is admitted if there exists a compute node that can accommodate it and keeping the total remote memory usage of the entire cluster within total remote memory size (number of compute nodes times 32GB in our setting).
 
 # Run Experiment
