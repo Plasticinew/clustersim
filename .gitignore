@@ -1,1 +1,5 @@
 matched
+__pycache__/
+*.pyc
+res/*.txt
+res/one_to_one_trace_test/

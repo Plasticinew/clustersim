@@ -9,6 +9,9 @@ import os
 
 PRINT_ENABLE = False
 use_optimal_shrink = False
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.path.join(REPO_ROOT, 'res')
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
 def eq(x,mems,local_mem):
     return np.dot(x, mems) - local_mem
@@ -56,7 +59,8 @@ class Server:
         self.L = L
         self.checkin(max_cpus, max_mem, remotemem, uniform_policy, use_fastswap, 
                      min_ratio, workload_ratios, reclamation_cpus)
-        self.path = '/mydata/clustersim/res/{}-4servers-32G-fastswap.txt'.format(sid) if use_fastswap else '/mydata/clustersim/res/{}-4servers-directswap.txt'
+        filename = 'server-{}-fastswap.txt'.format(sid) if use_fastswap else 'server-{}-directswap.txt'.format(sid)
+        self.path = os.path.join(RESULTS_DIR, filename)
         self.res_file = open(self.path, 'w')
         self.max_remote_mem = max_remote_mem
 
@@ -370,7 +374,8 @@ def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, un
     avail_list = []
     until = until / 1000
     id = 200 / (until/ 60)
-    mem_usage_path = '/mydata/clustersim/res/fastswap_{}.txt'.format(id) if use_fastswap else '/mydata/clustersim/res/directswap_{}.txt'.format(id)
+    filename = 'fastswap_{}.txt'.format('{:g}'.format(id)) if use_fastswap else 'directswap_{}.txt'.format('{:g}'.format(id))
+    mem_usage_path = os.path.join(RESULTS_DIR, filename)
     mem_usage_file = open(mem_usage_path, 'w')
 
     memutil_servers = []
@@ -430,7 +435,7 @@ def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, un
         
         prev_time_second = cur_time_second
         if use_fastswap:
-            prev_remote_mem_useage = 32768 * len(servers)
+            prev_remote_mem_useage = 65536 * len(servers)
         else:
             prev_remote_mem_useage = 0
             for s in servers:
@@ -440,8 +445,8 @@ def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, un
 
     for i in range(len(servers)):
         avg = sum(memutil_servers[i]) / len(memutil_servers[i])
-        avg_ratio = avg / 32768
-        print("{}".format(avg_ratio))
+        avg_ratio = avg / 65536
+        my_print("{}".format(avg_ratio))
 
     total_pending = 0
     for v in Pending.values():
@@ -516,4 +521,3 @@ def simulate(seed, mem, size, until, ratios, workload, cpus, num_servers, remote
     except KeyboardInterrupt:
         for s in servers[:]:
             del s
-
