@@ -48,7 +48,7 @@ def my_print(s):
 
 class Server:
     def __init__(self, sid, L, remotemem, max_cpus, max_mem,
-                 uniform_policy, use_fastswap, min_ratio, workload_ratios, reclamation_cpus, max_remote_mem):
+                 uniform_policy, fixed_ratio_policy, hybrid_fixed_ratio_policy, use_fastswap, min_ratio, workload_ratios, reclamation_cpus, max_remote_mem):
         self.sid = sid
         self.alloc_mem = 0
         self.min_mem_sum = 0
@@ -57,12 +57,12 @@ class Server:
         self.last_time = 0 # added for simulation
         self.next_time = 0 # optimization
         self.L = L
-        self.checkin(max_cpus, max_mem, remotemem, uniform_policy, use_fastswap, 
+        self.max_remote_mem = max_remote_mem
+        self.checkin(max_cpus, max_mem, remotemem, uniform_policy, fixed_ratio_policy, hybrid_fixed_ratio_policy, use_fastswap,
                      min_ratio, workload_ratios, reclamation_cpus)
         filename = 'server-{}-fastswap.txt'.format(sid) if use_fastswap else 'server-{}-directswap.txt'.format(sid)
         self.path = os.path.join(RESULTS_DIR, filename)
         self.res_file = open(self.path, 'w')
-        self.max_remote_mem = max_remote_mem
 
 
     def append_job(self, workload):
@@ -71,7 +71,7 @@ class Server:
     def remove_job(self, workload):
         self.executing.remove(workload)
 
-    def checkin(self, max_cpus, max_mem, use_remote, use_uniform_policy, use_fastswap,min_ratio, workload_ratios, reclamation_cpus):
+    def checkin(self, max_cpus, max_mem, use_remote, use_uniform_policy, fixed_ratio_policy, hybrid_fixed_ratio_policy, use_fastswap,min_ratio, workload_ratios, reclamation_cpus):
         """
         the scheduler checks in with these params.
         we return whether we have enough resources to do the checkin.
@@ -84,13 +84,102 @@ class Server:
         self.free_cpus = max_cpus
         self.remote_mem = use_remote
         self.use_uniform_policy = use_uniform_policy
+        self.fixed_ratio_policy = fixed_ratio_policy
+        self.hybrid_fixed_ratio_policy = hybrid_fixed_ratio_policy
         self.use_fastswap = use_fastswap
         self.min_ratio = min_ratio
         self.workload_ratios = workload_ratios
         self.extra_cpus = reclamation_cpus*self.remote_mem 
+        if self.remote_mem and (self.fixed_ratio_policy or self.hybrid_fixed_ratio_policy):
+            if self.max_remote_mem > 0:
+                self.fixed_ratio = self.total_mem / (self.total_mem + self.max_remote_mem)
+            elif self.min_ratio is not None:
+                self.fixed_ratio = self.min_ratio
+            else:
+                self.fixed_ratio = 1
+        else:
+            self.fixed_ratio = 1
         logging.info("Checkin Successful")
 
         return True
+
+    def use_fixed_ratio_policy(self):
+        return self.remote_mem and self.fixed_ratio_policy
+
+    def use_hybrid_fixed_ratio_policy(self):
+        return self.remote_mem and self.hybrid_fixed_ratio_policy
+
+    def uses_ratio_based_placement(self, projected_alloc_mem=None):
+        if not self.remote_mem:
+            return False
+        if self.use_fixed_ratio_policy():
+            return True
+        if self.use_hybrid_fixed_ratio_policy():
+            if projected_alloc_mem is None:
+                projected_alloc_mem = self.alloc_mem
+            return projected_alloc_mem > self.total_mem
+        return False
+
+    def get_workload_ratio(self, workload, force_ratio_mode=False):
+        if not force_ratio_mode and not self.uses_ratio_based_placement():
+            return 1
+        if workload.min_ratio is not None:
+            return min(1, workload.min_ratio)
+        return self.fixed_ratio
+
+    def ratio_mode_usage(self, workloads):
+        local_usage = 0.0
+        remote_usage = 0.0
+        for workload in workloads:
+            workload_ratio = self.get_workload_ratio(workload, force_ratio_mode=True)
+            local_usage += workload.ideal_mem * workload_ratio
+            remote_usage += workload.ideal_mem * (1 - workload_ratio)
+        return local_usage, remote_usage
+
+    def get_local_usage(self):
+        if self.uses_ratio_based_placement():
+            local_usage, _ = self.ratio_mode_usage(self.executing)
+            return local_usage
+        return min(self.alloc_mem, self.total_mem)
+
+    def get_remote_usage(self):
+        if not self.remote_mem:
+            return 0
+        if self.uses_ratio_based_placement():
+            _, remote_usage = self.ratio_mode_usage(self.executing)
+            return remote_usage
+        return max(self.alloc_mem - self.total_mem,0)
+
+    def projected_fixed_ratio_usage(self, workload):
+        projected_alloc_mem = self.alloc_mem + workload.ideal_mem
+        if self.uses_ratio_based_placement(projected_alloc_mem):
+            projected_local, projected_remote = self.ratio_mode_usage(self.executing + [workload])
+        else:
+            projected_local = self.get_local_usage() + workload.ideal_mem
+            projected_remote = self.get_remote_usage()
+        projected_used_cpus = (self.total_cpus - self.free_cpus) + workload.cpu_req
+        return projected_local, projected_remote, projected_used_cpus
+
+    def fixed_ratio_directswap_score(self, workload, soft_remote_cap):
+        projected_local, projected_remote, projected_used_cpus = self.projected_fixed_ratio_usage(workload)
+        safe_remote_cap = max(float(soft_remote_cap), 1.0)
+        local_pressure = projected_local / self.total_mem
+        remote_pressure = projected_remote / safe_remote_cap
+        cpu_pressure = projected_used_cpus / self.total_cpus
+        remote_over_soft_cap = max(0.0, projected_remote - soft_remote_cap) / safe_remote_cap
+        pressure_gap = max(local_pressure, remote_pressure, cpu_pressure) - min(local_pressure, remote_pressure, cpu_pressure)
+        return (
+            remote_over_soft_cap,
+            pressure_gap,
+            max(local_pressure, remote_pressure, cpu_pressure),
+            remote_pressure,
+            local_pressure,
+            cpu_pressure,
+            projected_remote,
+            projected_local,
+            projected_used_cpus,
+            self.sid,
+        )
     def update_resources(self, workload, add):
         if add:
             self.free_cpus -= workload.cpu_req
@@ -135,6 +224,12 @@ class Server:
         self.last_time = cur_time
 
     def set_cur_ratio(self):
+        if self.uses_ratio_based_placement():
+            try:
+                self.cur_ratio = self.get_local_usage() / self.alloc_mem
+            except ZeroDivisionError:
+                self.cur_ratio = 1
+            return
         try:
             self.cur_ratio = min(1, self.total_mem / self.alloc_mem)
         except ZeroDivisionError:
@@ -166,6 +261,12 @@ class Server:
         return np.round(final_ratios,3), res.fun
 
     def shrink_all_uniformly(self, workloads):
+        if self.uses_ratio_based_placement():
+            self.set_cur_ratio()
+            return [self.get_workload_ratio(w, force_ratio_mode=True) for w in workloads]
+        if self.use_hybrid_fixed_ratio_policy():
+            self.cur_ratio = 1
+            return [1 for _ in workloads]
         total_ideal_mem = sum([w.ideal_mem for w in workloads])
         try:
             local_ratio = min(1, self.total_mem / total_ideal_mem)
@@ -214,6 +315,17 @@ class Server:
         if not self.remote_mem:
             return False
         if not self.fits_cpu(w):
+            return False
+
+        if self.use_fixed_ratio_policy() or self.use_hybrid_fixed_ratio_policy():
+            local_alloc_mem, remote_alloc_mem, _ = self.projected_fixed_ratio_usage(w)
+            if not self.uses_ratio_based_placement(self.alloc_mem + w.ideal_mem):
+                return False
+            if local_alloc_mem <= self.total_mem:
+                if self.use_fastswap:
+                    return remote_alloc_mem <= self.max_remote_mem
+                else:
+                    return avail_far_mem is None or remote_alloc_mem <= avail_far_mem
             return False
 
         if self.use_uniform_policy:
@@ -299,28 +411,38 @@ def find_server_fits(servers, workload, max_far_mem, server_seq):
     seq = server_seq
     if not servers:
         return None
-    # first try to fit the workload normally
-    for i in seq:
-        s = servers[i]
-        if s.fits_normally(workload):
-            return s
+    if not servers[0].use_fixed_ratio_policy():
+        # first try to fit the workload normally
+        for i in seq:
+            s = servers[i]
+            if s.fits_normally(workload):
+                return s
     # normal placement didn't work, are we using remote memory?
     if not servers[0].remote_mem:
         return None
 
     # we are using remote memory. for every server, check if we
     # can fit it using remote mem
-    total_far_mem_used = sum([max(s.alloc_mem - s.total_mem,0) for s in servers])
+    total_far_mem_used = sum([s.get_remote_usage() for s in servers])
+    fit_candidates = []
+    soft_remote_cap = servers[0].max_remote_mem
 
     for i in seq:
         s = servers[i]
-        others_far_mem_used = total_far_mem_used - max(0, s.alloc_mem - s.total_mem)
+        others_far_mem_used = total_far_mem_used - s.get_remote_usage()
         if max_far_mem > 0: # has a limit
             avail_far_mem = max_far_mem - others_far_mem_used
         else: # no limits
             avail_far_mem = None
         if s.remote_mem and s.fits_remotemem(workload, avail_far_mem):
-            return s
+            if (servers[0].use_fixed_ratio_policy() or servers[0].use_hybrid_fixed_ratio_policy()) and not servers[0].use_fastswap:
+                fit_candidates.append((s.fixed_ratio_directswap_score(workload, soft_remote_cap), s))
+            else:
+                return s
+
+    if fit_candidates:
+        fit_candidates.sort(key=lambda entry: entry[0])
+        return fit_candidates[0][1]
 
     return None
 
@@ -357,103 +479,154 @@ def get_avail_far_mem(servers, s, max_far_mem):
     others_far_mem_used = 0
     for ss in servers:
         if ss != s:
-            others_far_mem_used += max(0, ss.alloc_mem - ss.total_mem)
+            others_far_mem_used += ss.get_remote_usage()
     return max_far_mem - others_far_mem_used
 
 def update_server_seq(default_seq,server_seq):
-    server_seq = default_seq[:]
+    server_seq[:] = default_seq[:]
     random.shuffle(server_seq)
 
-def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, until):
+def summarize_jobs(jobs_ts):
+    if not jobs_ts:
+        return 0.0, 0.0
+
+    ideal_runtime_cache = {}
+    total_queue_time = 0.0
+    total_runtime_slowdown = 0.0
+
+    for job in jobs_ts.values():
+        total_queue_time += job['exec'] - job['arrival']
+        service_time = job['finish'] - job['exec']
+        workload_name = job['workload']
+        if workload_name not in ideal_runtime_cache:
+            ideal_runtime_cache[workload_name] = workloads.get_workload_class(workload_name)(0).profile(1)
+        total_runtime_slowdown += service_time / ideal_runtime_cache[workload_name]
+
+    num_jobs = len(jobs_ts)
+    return total_queue_time / num_jobs, total_runtime_slowdown / num_jobs
+
+def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, until, return_metrics=False):
     Pending = dict() #key is wname, value is a list of workloads and timestamp of that name in pending
     global cur_time
     default_seq = list(range(len(servers)))
     server_seq = default_seq[:]
-    far_mem_usage = []
-    local_mem_usage = []
-    avail_list = []
     until = until / 1000
     id = 200 / (until/ 60)
     filename = 'fastswap_{}.txt'.format('{:g}'.format(id)) if use_fastswap else 'directswap_{}.txt'.format('{:g}'.format(id))
     mem_usage_path = os.path.join(RESULTS_DIR, filename)
-    mem_usage_file = open(mem_usage_path, 'w')
-
-    memutil_servers = []
-
-    for s in servers:
-        memutil_servers.append([])
+    total_mem_capacity = sum(s.total_mem for s in servers)
+    remote_mem_capacity = 0
+    if servers and servers[0].remote_mem:
+        if use_fastswap:
+            remote_mem_capacity = sum(s.max_remote_mem for s in servers)
+        elif max_far_mem > 0:
+            remote_mem_capacity = max_far_mem
+    cluster_mem_capacity = total_mem_capacity + remote_mem_capacity
 
     prev_time_second = 0
     prev_remote_mem_useage = 0
+    last_sample_time = 0
+    total_mem_time = 0.0
+    remote_mem_time = 0.0
 
-    while not L.is_empty():
-        timestamp, event = L.next_event()
-        cur_time = timestamp
-        cur_time_second = int(timestamp / 1000)
-        for i in range(prev_time_second, cur_time_second):
-            mem_usage_file.write(str(prev_remote_mem_useage) + '\n')
+    def accumulate_usage(next_time):
+        nonlocal last_sample_time
+        nonlocal total_mem_time
+        nonlocal remote_mem_time
+        delta = next_time - last_sample_time
+        if delta <= 0:
+            last_sample_time = next_time
+            return
+        cluster_alloc_mem = sum(s.alloc_mem for s in servers)
+        cluster_remote_mem = sum(s.get_remote_usage() for s in servers)
+        total_mem_time += cluster_alloc_mem * delta
+        remote_mem_time += cluster_remote_mem * delta
+        last_sample_time = next_time
 
-        my_print('timestamp: {} ms'.format(cur_time))
-        if event.start: # start node
-            workload = event.event_to_workload(workload_ratios)
-            s = None
-            if not workload.wname in Pending:
-                Pending[workload.wname] = [] # initialize
-            if len(Pending[workload.wname]) == 0:
-                s = find_server_fits(servers, workload, max_far_mem, server_seq) # only need to do this when pending is empty for the class
-            if s:
-                update_server_seq(default_seq,server_seq)
-                s.fill_job(workload)
-                jobs_ts[workload.idd]['exec'] = cur_time
-            else:
-                my_print("job {} can't fit".format(workload.get_name()))
-                Pending[workload.wname].append((workload,cur_time))
-        else: # end node
-            next_time = L.get_next_time()
-            old_idd = event.idd
-            old_s = servers[event.sid]
-            old_s.finish_job(old_idd) # finish job will update resource
-            jobs_ts[old_idd]['finish'] = cur_time
-            ids = [] # sid's that have been updated
-            s, new_workload = find_new_workload(servers, Pending, max_far_mem, server_seq)
-            while new_workload:
-                next_time = L.get_next_time() # next time may change as jobs are added
-                if next_time:
-                    cur_time += random.uniform(0, min(100, (next_time - cur_time)*0.5)) # don't want to excde next time
+    with open(mem_usage_path, 'w') as mem_usage_file:
+        while not L.is_empty():
+            timestamp, event = L.next_event()
+            accumulate_usage(timestamp)
+            cur_time = timestamp
+            cur_time_second = int(timestamp / 1000)
+            for i in range(prev_time_second, cur_time_second):
+                mem_usage_file.write(str(prev_remote_mem_useage) + '\n')
+
+            my_print('timestamp: {} ms'.format(cur_time))
+            if event.start: # start node
+                workload = event.event_to_workload(workload_ratios)
+                s = None
+                if not workload.wname in Pending:
+                    Pending[workload.wname] = [] # initialize
+                if len(Pending[workload.wname]) == 0:
+                    s = find_server_fits(servers, workload, max_far_mem, server_seq) # only need to do this when pending is empty for the class
+                if s:
+                    update_server_seq(default_seq,server_seq)
+                    s.fill_job(workload)
+                    jobs_ts[workload.idd]['exec'] = cur_time
                 else:
-                    cur_time += random.uniform(0, 100)
-                s.fill_job(new_workload)
-                jobs_ts[new_workload.idd]['exec'] = cur_time
-                update_server_seq(default_seq,server_seq)
-                ids.append(s.sid)
+                    my_print("job {} can't fit".format(workload.get_name()))
+                    Pending[workload.wname].append((workload,cur_time))
+            else: # end node
+                next_time = L.get_next_time()
+                old_idd = event.idd
+                old_s = servers[event.sid]
+                old_s.finish_job(old_idd) # finish job will update resource
+                jobs_ts[old_idd]['finish'] = cur_time
+                ids = [] # sid's that have been updated
                 s, new_workload = find_new_workload(servers, Pending, max_far_mem, server_seq)
-            if not (old_s.sid in ids): # only when it has not been updated
-                old_s.fill_job(None)
-        
-        for s in servers:
-            memutil_servers[s.sid].append(max(s.alloc_mem - s.total_mem,0))
-        
-        prev_time_second = cur_time_second
-        if use_fastswap:
-            prev_remote_mem_useage = 65536 * len(servers)
-        else:
+                while new_workload:
+                    next_time = L.get_next_time() # next time may change as jobs are added
+                    if next_time:
+                        next_start_time = cur_time + random.uniform(0, min(100, (next_time - cur_time)*0.5)) # don't want to excde next time
+                    else:
+                        next_start_time = cur_time + random.uniform(0, 100)
+                    accumulate_usage(next_start_time)
+                    cur_time = next_start_time
+                    s.fill_job(new_workload)
+                    jobs_ts[new_workload.idd]['exec'] = cur_time
+                    update_server_seq(default_seq,server_seq)
+                    ids.append(s.sid)
+                    s, new_workload = find_new_workload(servers, Pending, max_far_mem, server_seq)
+                if not (old_s.sid in ids): # only when it has not been updated
+                    old_s.fill_job(None)
+            
+            prev_time_second = cur_time_second
             prev_remote_mem_useage = 0
             for s in servers:
-                prev_remote_mem_useage += max(s.alloc_mem - s.total_mem,0)
+                prev_remote_mem_useage += s.get_remote_usage()
 
-        my_print('')
+            my_print('')
 
-    for i in range(len(servers)):
-        avg = sum(memutil_servers[i]) / len(memutil_servers[i])
-        avg_ratio = avg / 65536
-        my_print("{}".format(avg_ratio))
+    total_duration = cur_time
+    makespan = round(cur_time)
+    avg_mem_util = 0.0
+    avg_remote_mem_util = 0.0
+    if total_duration > 0 and cluster_mem_capacity > 0:
+        avg_mem_util = total_mem_time / (total_duration * cluster_mem_capacity)
+    if total_duration > 0 and remote_mem_capacity > 0:
+        avg_remote_mem_util = remote_mem_time / (total_duration * remote_mem_capacity)
+    avg_queue_time, avg_runtime_slowdown = summarize_jobs(jobs_ts)
+
+    my_print("avg_mem_util={:.6f}".format(avg_mem_util))
+    my_print("avg_remote_mem_util={:.6f}".format(avg_remote_mem_util))
+    my_print("avg_queue_time={:.6f}".format(avg_queue_time))
+    my_print("avg_runtime_slowdown={:.6f}".format(avg_runtime_slowdown))
 
     total_pending = 0
     for v in Pending.values():
         total_pending += len(v)
     assert total_pending == 0
 
-    return round(cur_time)
+    if return_metrics:
+        return {
+            'makespan': makespan,
+            'avg_mem_util': avg_mem_util,
+            'avg_remote_mem_util': avg_remote_mem_util,
+            'avg_queue_time': avg_queue_time,
+            'avg_runtime_slowdown': avg_runtime_slowdown,
+        }
+    return makespan
 
 def get_schedule(size, max_arrival, workloads, ratios, jobs_ts):
     L = Schedule()
@@ -464,7 +637,7 @@ def get_schedule(size, max_arrival, workloads, ratios, jobs_ts):
         ts = random.uniform(0, max_arrival) # uniform
         L.add_event(ts, 0, name, wid, True) # sid doesn't matter for start nodes, set when scheduled
         assert wid not in jobs_ts
-        jobs_ts[wid] = {'arrival': ts, 'exec': 0, 'finish': 0}
+        jobs_ts[wid] = {'arrival': ts, 'exec': 0, 'finish': 0, 'workload': name}
         wid += 1
 
     assert len(workloads) == len(ratios)
@@ -479,7 +652,7 @@ def get_schedule(size, max_arrival, workloads, ratios, jobs_ts):
     return L
 
 
-def simulate(seed, mem, size, until, ratios, workload, cpus, num_servers, remotemem, workload_ratios, max_far=0, use_shrink=False, uniform=False, min_ratio=None, use_small_workload=False, use_fastswap=False):
+def simulate(seed, mem, size, until, ratios, workload, cpus, num_servers, remotemem, workload_ratios, max_far=0, use_shrink=False, uniform=False, fixed_ratio_policy=False, hybrid_fixed_ratio_policy=False, min_ratio=None, use_small_workload=False, use_fastswap=False, return_metrics=False):
     global workloads
     if use_small_workload:
         import workloads_small as workloads
@@ -515,9 +688,12 @@ def simulate(seed, mem, size, until, ratios, workload, cpus, num_servers, remote
     servers = []
     for sid in range(num_servers):
         servers.append(Server(sid, L, remotemem, cpus, mem,
-                              uniform, use_fastswap, min_ratio, workload_ratios, reclamation_cpus, max_far/num_servers))
+                              uniform, fixed_ratio_policy, hybrid_fixed_ratio_policy, use_fastswap, min_ratio, workload_ratios, reclamation_cpus, max_far/num_servers))
     try:
-        return schedule(servers, L, workload_ratios, max_far, jobs_ts, use_fastswap, until)
+        return schedule(servers, L, workload_ratios, max_far, jobs_ts, use_fastswap, until, return_metrics=return_metrics)
     except KeyboardInterrupt:
         for s in servers[:]:
             del s
+    finally:
+        for s in servers:
+            s.res_file.close()

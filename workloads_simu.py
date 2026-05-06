@@ -92,7 +92,7 @@ class Workload:
 class Quicksort(Workload):
     wname = "quicksort"
     ideal_mem = 20490
-    min_ratio = 0.6
+    min_ratio = 0.5
     min_mem = int(min_ratio * ideal_mem)
     cpu_req = 1
     x = [1,      0.9,    0.8,   0.7,    0.6,    0.5]
@@ -102,7 +102,7 @@ class Quicksort(Workload):
 class Kmeans(Workload):
     wname = "kmeans"
     ideal_mem = 24100
-    min_ratio = 0.75
+    min_ratio = 0.5
     min_mem = int(min_ratio * ideal_mem)
     binary_name = "python"
     cpu_req = 1
@@ -113,7 +113,7 @@ class Kmeans(Workload):
 class WordCount(Workload):
     wname = "wordcount"
     ideal_mem = 33000
-    min_ratio = 0.75
+    min_ratio = 0.5
     min_mem = int(min_ratio * ideal_mem)
     binary_name = "wordcount"
     cpu_req = 1
@@ -124,7 +124,7 @@ class WordCount(Workload):
 class LinearRegression(Workload):
     wname = "linearregression"
     ideal_mem = 18200
-    min_ratio = 0.8
+    min_ratio = 0.5
     min_mem = int(min_ratio * ideal_mem)
     binary_name = "lr"
     cpu_req = 1
@@ -135,7 +135,7 @@ class LinearRegression(Workload):
 class Xgboost(Workload):
     wname = "xgboost"
     ideal_mem = 16300
-    min_ratio = 0.65
+    min_ratio = 0.5
     min_mem = int(min_ratio * ideal_mem)
     cpu_req = 2
     x = [1,      0.9,    0.8,    0.7,    0.6,    0.5,    0.4,    0.3,    0.2]
@@ -145,7 +145,7 @@ class Xgboost(Workload):
 class Xsbench(Workload):
     wname = "xsbench"
     ideal_mem = 33300
-    min_ratio = 1
+    min_ratio = 0.5
     min_mem = int(min_ratio * ideal_mem)
     cpu_req = 8
     x = [1, 0.9, 0.8]
@@ -155,7 +155,7 @@ class Xsbench(Workload):
 class Snappy(Workload):
     wname = "snappy"
     ideal_mem = 34000
-    min_ratio = 0.75
+    min_ratio = 0.5
     min_mem = int(min_ratio * ideal_mem)
     cpu_req = 1
     x = [1,      0.9,    0.8,    0.7,    0.6]
@@ -165,17 +165,39 @@ class Snappy(Workload):
 class Pagerank(Workload):
     wname = "pagerank"
     ideal_mem = 18900
-    min_ratio = 1
+    min_ratio = 0.5
     min_mem = int(min_ratio * ideal_mem)
     cpu_req = 8
     x = [1,      0.9,    0.8]
     y = [221.06, 736.29, 99900000.00]
     coeff = [-1617.416, 3789.953, -2993.734, 1225.477]
 
+class Llama(Workload):
+    wname = "llama"
+    ideal_mem = 10000
+    min_ratio = 0.5
+    min_mem = int(min_ratio * ideal_mem)
+    binary_name = "llama-bench"
+    cpu_req = 1
+    x = [1,      0.9,    0.8,   0.7,    0.6,    0.5]
+    y = [503.75, 520.41, 533.69, 547.11, 561.2, 584.78]
+    coeff = [1104.1666666663175, -3923.0555555545757, 5092.958333332335, -3006.2837301582927, 1236.0090476189782]
+
+class Graph500(Workload):
+    wname = "graph500"
+    ideal_mem = 12000
+    min_ratio = 0.5
+    min_mem = int(min_ratio * ideal_mem)
+    binary_name = "graph500_reference_bfs"
+    cpu_req = 1
+    x = [1,      0.9,    0.8,   0.7,    0.6,    0.5]
+    y = [503.75, 520.41, 533.69, 547.11, 561.2, 584.78]
+    coeff = [1104.1666666663175, -3923.0555555545757, 5092.958333332335, -3006.2837301582927, 1236.0090476189782]
+
 class Redis(Workload):
     wname = "redis"
     ideal_mem = 31800
-    min_ratio = 0.6
+    min_ratio = 0.5
     min_mem = int(min_ratio * ideal_mem)
     cpu_req = 2
     #x = [1,      0.9,    0.8,    0.7,    0.6,    0.5,    0.4]
@@ -193,4 +215,6 @@ def get_workload_class(wname):
             'redis': Redis,
             'wordcount': WordCount,
             'linearregression': LinearRegression,
-            'kmeans': Kmeans}[wname]
+            'kmeans': Kmeans,
+            'graph500': Graph500,
+            'llama': Llama,}[wname]
