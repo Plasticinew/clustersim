@@ -14,18 +14,18 @@ import workloads_simu as workloads
 
 CPU_PER_NODE = 64
 LOCAL_MEM_MB = 128 * 1024
-REMOTE_MEM_MB = 64 * 1024
+REMOTE_MEM_MB = 48 * 1024
 TOTAL_MEM_MB = LOCAL_MEM_MB + REMOTE_MEM_MB
-WORKLOAD_LOCAL_RATIO = 66
+WORKLOAD_LOCAL_RATIO = 80
 WORKLOAD_NAMES = [
     'quicksort',
     'kmeans',
-    # 'wordcount',
+    'wordcount',
     'linearregression',
-    # 'xgboost',
+    'xgboost',
     'xsbench',
-    # 'snappy',
-    # 'pagerank',
+    'snappy',
+    'pagerank',
     'redis',
     'graph500',
     'llama',

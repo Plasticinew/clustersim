@@ -58,5 +58,17 @@ Example usage:
 ./test_directswap_best.sh --candidate-limit 500 --top-k 20
 ./test_directswap_best.sh --workload-percent 1000
 ```
+
+## `test_random_traces.sh`
+`test_random_traces.sh` generates purely random traces and compares Directswap against Fastswap on each trace. By default it generates `200` traces, each containing `200` tasks sampled uniformly from the built-in workload set. It supports `uniform`, `fix`, and `optimal` strategy aliases, which map to `auto-shrink`, `fixed-ratio`, and `nonuniform-optimal` respectively.
+
+Example usage:
+```
+./test_random_traces.sh
+./test_random_traces.sh --strategy uniform
+./test_random_traces.sh --strategy fix
+./test_random_traces.sh --num-traces 50 --tasks-per-trace 200
+./test_random_traces.sh --workloads quicksort,redis,llama
+```
 ## Questions
 For additional questions please contact us at cfm@lists.eecs.berkeley.edu
