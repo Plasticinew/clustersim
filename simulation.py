@@ -488,38 +488,51 @@ def update_server_seq(default_seq,server_seq):
 
 def summarize_jobs(jobs_ts):
     if not jobs_ts:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
 
     ideal_runtime_cache = {}
     total_queue_time = 0.0
     total_runtime_slowdown = 0.0
+    total_turnaround_slowdown = 0.0
 
     for job in jobs_ts.values():
         total_queue_time += job['exec'] - job['arrival']
         service_time = job['finish'] - job['exec']
+        turnaround_time = job['finish'] - job['arrival']
         workload_name = job['workload']
         if workload_name not in ideal_runtime_cache:
             ideal_runtime_cache[workload_name] = workloads.get_workload_class(workload_name)(0).profile(1)
-        total_runtime_slowdown += service_time / ideal_runtime_cache[workload_name]
+        ideal_runtime = ideal_runtime_cache[workload_name]
+        total_runtime_slowdown += service_time / ideal_runtime
+        total_turnaround_slowdown += turnaround_time / ideal_runtime
 
     num_jobs = len(jobs_ts)
-    return total_queue_time / num_jobs, total_runtime_slowdown / num_jobs
+    return (
+        total_queue_time / num_jobs,
+        total_runtime_slowdown / num_jobs,
+        total_turnaround_slowdown / num_jobs,
+    )
 
 
 def pending_mem_demand(Pending):
     return sum(workload.ideal_mem for queue in Pending.values() for workload, _ in queue)
 
 
-def record_memory_curve_point(memory_curve_points, timestamp, servers, Pending):
+def record_memory_curve_point(memory_curve_points, timestamp, servers, Pending, remote_mem_capacity):
     running_task_demand = sum(s.alloc_mem for s in servers)
     local_used = sum(s.get_local_usage() for s in servers)
     remote_used = sum(s.get_remote_usage() for s in servers)
     pending_task_demand = pending_mem_demand(Pending)
+    if remote_mem_capacity > 0:
+        remote_mem_utilization = remote_used / remote_mem_capacity
+    else:
+        remote_mem_utilization = 0.0
     point = {
         'time_ms': float(timestamp),
         'time_s': float(timestamp) / 1000.0,
         'local_used_mem_mb': float(local_used),
         'remote_used_mem_mb': float(remote_used),
+        'remote_mem_utilization': float(remote_mem_utilization),
         'total_used_mem_mb': float(local_used + remote_used),
         'running_task_demand_mem_mb': float(running_task_demand),
         'pending_task_demand_mem_mb': float(pending_task_demand),
@@ -541,12 +554,12 @@ def write_memory_curve_tsv(path, memory_curve_points):
     ensure_parent_dir(path)
     with open(path, 'w') as handle:
         handle.write(
-            'time_ms\ttime_s\tlocal_used_mem_mb\tremote_used_mem_mb\ttotal_used_mem_mb\t'
+            'time_ms\ttime_s\tlocal_used_mem_mb\tremote_used_mem_mb\tremote_mem_utilization\ttotal_used_mem_mb\t'
             'running_task_demand_mem_mb\tpending_task_demand_mem_mb\tactive_task_demand_mem_mb\n'
         )
         for point in memory_curve_points:
             handle.write(
-                '{time_ms:.6f}\t{time_s:.6f}\t{local_used_mem_mb:.6f}\t{remote_used_mem_mb:.6f}\t{total_used_mem_mb:.6f}\t'
+                '{time_ms:.6f}\t{time_s:.6f}\t{local_used_mem_mb:.6f}\t{remote_used_mem_mb:.6f}\t{remote_mem_utilization:.6f}\t{total_used_mem_mb:.6f}\t'
                 '{running_task_demand_mem_mb:.6f}\t{pending_task_demand_mem_mb:.6f}\t{active_task_demand_mem_mb:.6f}\n'.format(
                     **point
                 )
@@ -561,15 +574,13 @@ def plot_memory_curve(path, memory_curve_points):
 
     ensure_parent_dir(path)
     times = [point['time_s'] for point in memory_curve_points]
-    local_used = [point['local_used_mem_mb'] for point in memory_curve_points]
-    active_demand = [point['active_task_demand_mem_mb'] for point in memory_curve_points]
+    remote_utilization_pct = [point['remote_mem_utilization'] * 100.0 for point in memory_curve_points]
 
     plt.figure(figsize=(10, 5))
-    plt.step(times, local_used, where='post', linewidth=2.5, label='Actual occupied local memory')
-    plt.step(times, active_demand, where='post', linewidth=2.5, label='Current task total memory demand')
+    plt.step(times, remote_utilization_pct, where='post', linewidth=2.5, label='Remote memory utilization')
     plt.xlabel('Time (s)')
-    plt.ylabel('Memory (MB)')
-    plt.title('Memory Curve Over Time')
+    plt.ylabel('Remote Memory Utilization (%)')
+    plt.title('Remote Memory Utilization Over Time')
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -614,7 +625,7 @@ def schedule(
     memory_curve_points = [] if (memory_curve_tsv or memory_curve_png) else None
 
     if memory_curve_points is not None:
-        record_memory_curve_point(memory_curve_points, 0, servers, Pending)
+        record_memory_curve_point(memory_curve_points, 0, servers, Pending, remote_mem_capacity)
 
     def accumulate_usage(next_time):
         nonlocal last_sample_time
@@ -655,7 +666,7 @@ def schedule(
                     my_print("job {} can't fit".format(workload.get_name()))
                     Pending[workload.wname].append((workload,cur_time))
                 if memory_curve_points is not None:
-                    record_memory_curve_point(memory_curve_points, cur_time, servers, Pending)
+                    record_memory_curve_point(memory_curve_points, cur_time, servers, Pending, remote_mem_capacity)
             else: # end node
                 next_time = L.get_next_time()
                 old_idd = event.idd
@@ -663,7 +674,7 @@ def schedule(
                 old_s.finish_job(old_idd) # finish job will update resource
                 jobs_ts[old_idd]['finish'] = cur_time
                 if memory_curve_points is not None:
-                    record_memory_curve_point(memory_curve_points, cur_time, servers, Pending)
+                    record_memory_curve_point(memory_curve_points, cur_time, servers, Pending, remote_mem_capacity)
                 ids = [] # sid's that have been updated
                 s, new_workload = find_new_workload(servers, Pending, max_far_mem, server_seq)
                 while new_workload:
@@ -679,12 +690,12 @@ def schedule(
                     update_server_seq(default_seq,server_seq)
                     ids.append(s.sid)
                     if memory_curve_points is not None:
-                        record_memory_curve_point(memory_curve_points, cur_time, servers, Pending)
+                        record_memory_curve_point(memory_curve_points, cur_time, servers, Pending, remote_mem_capacity)
                     s, new_workload = find_new_workload(servers, Pending, max_far_mem, server_seq)
                 if not (old_s.sid in ids): # only when it has not been updated
                     old_s.fill_job(None)
                     if memory_curve_points is not None:
-                        record_memory_curve_point(memory_curve_points, cur_time, servers, Pending)
+                        record_memory_curve_point(memory_curve_points, cur_time, servers, Pending, remote_mem_capacity)
             
             prev_time_second = cur_time_second
             prev_remote_mem_useage = 0
@@ -701,12 +712,13 @@ def schedule(
         avg_mem_util = total_mem_time / (total_duration * cluster_mem_capacity)
     if total_duration > 0 and remote_mem_capacity > 0:
         avg_remote_mem_util = remote_mem_time / (total_duration * remote_mem_capacity)
-    avg_queue_time, avg_runtime_slowdown = summarize_jobs(jobs_ts)
+    avg_queue_time, avg_runtime_slowdown, avg_turnaround_slowdown = summarize_jobs(jobs_ts)
 
     my_print("avg_mem_util={:.6f}".format(avg_mem_util))
     my_print("avg_remote_mem_util={:.6f}".format(avg_remote_mem_util))
     my_print("avg_queue_time={:.6f}".format(avg_queue_time))
     my_print("avg_runtime_slowdown={:.6f}".format(avg_runtime_slowdown))
+    my_print("avg_turnaround_slowdown={:.6f}".format(avg_turnaround_slowdown))
 
     total_pending = 0
     for v in Pending.values():
@@ -714,7 +726,7 @@ def schedule(
     assert total_pending == 0
 
     if memory_curve_points is not None:
-        record_memory_curve_point(memory_curve_points, cur_time, servers, Pending)
+        record_memory_curve_point(memory_curve_points, cur_time, servers, Pending, remote_mem_capacity)
         if memory_curve_tsv:
             write_memory_curve_tsv(memory_curve_tsv, memory_curve_points)
         if memory_curve_png:
@@ -727,6 +739,7 @@ def schedule(
             'avg_remote_mem_util': avg_remote_mem_util,
             'avg_queue_time': avg_queue_time,
             'avg_runtime_slowdown': avg_runtime_slowdown,
+            'avg_turnaround_slowdown': avg_turnaround_slowdown,
         }
     return makespan
 

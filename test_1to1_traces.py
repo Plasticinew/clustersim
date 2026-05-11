@@ -12,9 +12,9 @@ from typing import Dict, List, Tuple
 import workloads_simu as workloads
 
 
-CPU_PER_NODE = 64
+CPU_PER_NODE = 96
 LOCAL_MEM_MB = 128 * 1024
-REMOTE_MEM_MB = 48 * 1024
+REMOTE_MEM_MB = 32 * 1024
 TOTAL_MEM_MB = LOCAL_MEM_MB + REMOTE_MEM_MB
 WORKLOAD_LOCAL_RATIO = 80
 WORKLOAD_NAMES = [
@@ -29,6 +29,15 @@ WORKLOAD_NAMES = [
     'redis',
     'graph500',
     'llama',
+    'qs_c18_m30000',
+    'qs_c18_m50000',
+    'qs_c18_m80000',
+    'qs_c30_m30000',
+    'qs_c30_m50000',
+    'qs_c30_m80000',
+    'qs_c48_m30000',
+    'qs_c48_m50000',
+    'qs_c48_m80000',
 ]
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = REPO_ROOT / 'res' / 'one_to_one_trace_test'
@@ -217,8 +226,10 @@ def run_command(command: List[str]) -> Dict[str, float]:
         return {
             'makespan': float(metrics['makespan']),
             'avg_mem_util': float(metrics['avg_mem_util']),
+            'avg_remote_mem_util': float(metrics['avg_remote_mem_util']),
             'avg_queue_time': float(metrics['avg_queue_time']),
             'avg_runtime_slowdown': float(metrics['avg_runtime_slowdown']),
+            'avg_turnaround_slowdown': float(metrics['avg_turnaround_slowdown']),
         }
     except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise RuntimeError(

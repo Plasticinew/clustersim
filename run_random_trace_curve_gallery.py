@@ -17,6 +17,7 @@ from test_random_traces import (
     build_command,
     generate_trace,
     normalize_arrival_args,
+    normalize_workloads,
 )
 
 
@@ -57,6 +58,28 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
     )
+    parser.add_argument(
+        '--workloads',
+        type=lambda s: s.split(','),
+        help='comma-separated workload names to sample from; defaults to the built-in workload set',
+    )
+    parser.add_argument(
+        '--workload-local-ratio-percent',
+        type=float,
+        default=66.0,
+        help='local-memory percentage to assign to every active workload, e.g. 1 means 99%% can be swapped out',
+    )
+    parser.add_argument(
+        '--uniform-min-ratio',
+        type=float,
+        default=0.5,
+        help='global minimum local-memory ratio used by uniform policies',
+    )
+    parser.add_argument(
+        '--max-far-mb',
+        type=int,
+        help='override the total remote-memory cap passed to simulation_one_time.py',
+    )
     return parser.parse_args()
 
 
@@ -78,17 +101,35 @@ def engine_label(fastswap: bool) -> str:
     return 'fastswap' if fastswap else 'uswap'
 
 
+def override_ratio_settings(
+    command: List[str],
+    num_active_workloads: int,
+    workload_local_ratio_percent: float,
+    uniform_min_ratio: float,
+    max_far_mb: int | None,
+) -> None:
+    workload_ratios_index = command.index('--workload_ratios') + 1
+    command[workload_ratios_index] = ','.join(
+        ['{:g}'.format(workload_local_ratio_percent)] * num_active_workloads
+    )
+    min_ratio_index = command.index('--min_ratio') + 1
+    command[min_ratio_index] = '{:g}'.format(uniform_min_ratio)
+    if max_far_mb is not None:
+        max_far_index = command.index('--max_far') + 1
+        command[max_far_index] = str(max_far_mb)
+
+
 def plot_overview(
     output_path: Path,
     trace_id: int,
     arrival_profile: str,
     strategy_results: Sequence[Dict[str, object]],
 ) -> None:
-    fig, axes = plt.subplots(len(strategy_results), 2, figsize=(14, 4 * len(strategy_results)), sharex=False)
+    fig, axes = plt.subplots(len(strategy_results), 1, figsize=(11, 3.6 * len(strategy_results)), sharex=False)
     if len(strategy_results) == 1:
         axes = [axes]
 
-    for row_axes, result in zip(axes, strategy_results):
+    for axis, result in zip(axes, strategy_results):
         uswap_curve = result['uswap_curve']
         fastswap_curve = result['fastswap_curve']
         uswap_metrics = result['uswap_metrics']
@@ -97,60 +138,31 @@ def plot_overview(
 
         uswap_times = [point['time_s'] for point in uswap_curve]
         fastswap_times = [point['time_s'] for point in fastswap_curve]
-
-        row_axes[0].step(
+        axis.step(
             uswap_times,
-            [point['local_used_mem_mb'] for point in uswap_curve],
+            [point['remote_mem_utilization'] * 100.0 for point in uswap_curve],
             where='post',
             linewidth=2.0,
             label='uswap',
         )
-        row_axes[0].step(
+        axis.step(
             fastswap_times,
-            [point['local_used_mem_mb'] for point in fastswap_curve],
+            [point['remote_mem_utilization'] * 100.0 for point in fastswap_curve],
             where='post',
             linewidth=2.0,
             label='fastswap',
         )
-        row_axes[0].set_ylabel('Memory (MB)')
-        row_axes[0].set_title(
-            '{} actual occupied local memory\nuswap makespan={:.0f}, fastswap makespan={:.0f}'.format(
+        axis.set_ylabel('Remote Util. (%)')
+        axis.set_title(
+            '{} remote memory utilization\nuswap avg_turnaround_slowdown={:.3f}x, fastswap avg_turnaround_slowdown={:.3f}x'.format(
                 strategy_label(strategy),
-                uswap_metrics['makespan'],
-                fastswap_metrics['makespan'],
+                uswap_metrics['avg_turnaround_slowdown'],
+                fastswap_metrics['avg_turnaround_slowdown'],
             )
         )
-        row_axes[0].grid(True, alpha=0.3)
-        row_axes[0].legend()
-
-        row_axes[1].step(
-            uswap_times,
-            [point['active_task_demand_mem_mb'] for point in uswap_curve],
-            where='post',
-            linewidth=2.0,
-            label='uswap',
-        )
-        row_axes[1].step(
-            fastswap_times,
-            [point['active_task_demand_mem_mb'] for point in fastswap_curve],
-            where='post',
-            linewidth=2.0,
-            label='fastswap',
-        )
-        row_axes[1].set_ylabel('Memory (MB)')
-        row_axes[1].set_title(
-            '{} current task total memory demand\nuswap queue={:.0f} ms, fastswap queue={:.0f} ms'.format(
-                strategy_label(strategy),
-                uswap_metrics['avg_queue_time'],
-                fastswap_metrics['avg_queue_time'],
-            )
-        )
-        row_axes[1].grid(True, alpha=0.3)
-        row_axes[1].legend()
-
-    for row_axes in axes:
-        row_axes[0].set_xlabel('Time (s)')
-        row_axes[1].set_xlabel('Time (s)')
+        axis.grid(True, alpha=0.3)
+        axis.legend()
+        axis.set_xlabel('Time (s)')
 
     fig.suptitle('Random trace {:03d} | arrival={}'.format(trace_id, arrival_profile), fontsize=15)
     fig.tight_layout(rect=[0, 0, 1, 0.98])
@@ -164,6 +176,7 @@ def main() -> None:
 
     strategies = list(args.strategies)
     arrival_profiles = list(args.arrival_profiles)
+    workload_names = normalize_workloads(args.workloads)
     for strategy in strategies:
         if strategy not in STRATEGY_TO_POLICY:
             raise ValueError('unknown strategy: {}'.format(strategy))
@@ -172,16 +185,22 @@ def main() -> None:
             raise ValueError('unknown arrival profile: {}'.format(arrival_profile))
 
     piecewise_weights = normalize_arrival_args('piecewise', args.piecewise_weights)
+    if not (0 < args.workload_local_ratio_percent <= 100):
+        raise ValueError('--workload-local-ratio-percent must be in the range (0, 100]')
+    if not (0 < args.uniform_min_ratio <= 1):
+        raise ValueError('--uniform-min-ratio must be in the range (0, 1]')
+    if args.max_far_mb is not None and args.max_far_mb <= 0:
+        raise ValueError('--max-far-mb must be positive when provided')
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_path = args.output_dir / 'manifest.tsv'
     with manifest_path.open('w') as manifest:
         manifest.write(
-            'trace_id\tarrival_profile\tstrategy\tengine\tpolicy\tcurve_tsv\tcurve_png\tmakespan\tavg_mem_util\tavg_queue_time\tavg_runtime_slowdown\n'
+            'trace_id\tarrival_profile\tstrategy\tengine\tpolicy\tworkload_local_ratio_percent\tuniform_min_ratio\tmax_far_mb\tcurve_tsv\tcurve_png\tmakespan\tavg_remote_mem_util\tavg_queue_time\tavg_runtime_slowdown\tavg_turnaround_slowdown\n'
         )
 
         for trace_id in args.trace_ids:
-            trace = generate_trace(trace_id, args.tasks_per_trace, WORKLOAD_NAMES, args.seed_base)
+            trace = generate_trace(trace_id, args.tasks_per_trace, workload_names, args.seed_base)
 
             for arrival_profile in arrival_profiles:
                 arrival_weights = None if arrival_profile == 'uniform' else piecewise_weights
@@ -208,6 +227,13 @@ def main() -> None:
                             arrival_profile,
                             arrival_weights,
                         )
+                        override_ratio_settings(
+                            command,
+                            len(trace.active_workloads),
+                            args.workload_local_ratio_percent,
+                            args.uniform_min_ratio,
+                            args.max_far_mb,
+                        )
                         command.extend(['--memory-curve-prefix', str(prefix)])
                         metrics = run_command(command)
                         curve_tsv = Path(str(prefix) + '.tsv')
@@ -220,31 +246,35 @@ def main() -> None:
                             'curve_png': curve_png,
                         }
                         manifest.write(
-                            'trace{trace_id:03d}\t{arrival_profile}\t{strategy}\t{engine}\t{policy}\t{curve_tsv}\t{curve_png}\t'
-                            '{makespan:.6f}\t{avg_mem_util:.6f}\t{avg_queue_time:.6f}\t{avg_runtime_slowdown:.6f}\n'.format(
+                            'trace{trace_id:03d}\t{arrival_profile}\t{strategy}\t{engine}\t{policy}\t{workload_local_ratio_percent}\t{uniform_min_ratio}\t{max_far_mb}\t{curve_tsv}\t{curve_png}\t'
+                            '{makespan:.6f}\t{avg_remote_mem_util:.6f}\t{avg_queue_time:.6f}\t{avg_runtime_slowdown:.6f}\t{avg_turnaround_slowdown:.6f}\n'.format(
                                 trace_id=trace_id,
                                 arrival_profile=arrival_profile,
                                 strategy=strategy,
                                 engine=engine,
                                 policy=policy,
+                                workload_local_ratio_percent='{0:g}'.format(args.workload_local_ratio_percent),
+                                uniform_min_ratio='{0:g}'.format(args.uniform_min_ratio),
+                                max_far_mb='' if args.max_far_mb is None else args.max_far_mb,
                                 curve_tsv=curve_tsv,
                                 curve_png=curve_png,
                                 makespan=metrics['makespan'],
-                                avg_mem_util=metrics['avg_mem_util'],
+                                avg_remote_mem_util=metrics['avg_remote_mem_util'],
                                 avg_queue_time=metrics['avg_queue_time'],
                                 avg_runtime_slowdown=metrics['avg_runtime_slowdown'],
+                                avg_turnaround_slowdown=metrics['avg_turnaround_slowdown'],
                             )
                         )
                         manifest.flush()
                         print(
                             '[trace {trace_id:03d}] arrival={arrival_profile} strategy={strategy} engine={engine} '
-                            'makespan={makespan:.0f} avg_mem_util={avg_mem_util:.2%} avg_queue={avg_queue:.0f}ms'.format(
+                            'avg_turnaround={avg_turnaround:.3f}x avg_remote_util={avg_remote_util:.2%} avg_queue={avg_queue:.0f}ms'.format(
                                 trace_id=trace_id,
                                 arrival_profile=arrival_profile,
                                 strategy=strategy,
                                 engine=engine,
-                                makespan=metrics['makespan'],
-                                avg_mem_util=metrics['avg_mem_util'],
+                                avg_turnaround=metrics['avg_turnaround_slowdown'],
+                                avg_remote_util=metrics['avg_remote_mem_util'],
                                 avg_queue=metrics['avg_queue_time'],
                             )
                         )
