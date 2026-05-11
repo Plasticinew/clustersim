@@ -29,6 +29,17 @@ def main():
     parser.add_argument('--until', type=int,
                         help='max arrival time in minutes default=20',
                         default=15)
+    parser.add_argument(
+        '--arrival-profile',
+        choices=('uniform', 'piecewise'),
+        default='uniform',
+        help='arrival-time distribution; piecewise uses bucket weights from --arrival-weights',
+    )
+    parser.add_argument(
+        '--arrival-weights',
+        type=lambda s: s.split(','),
+        help='comma-separated positive bucket weights for piecewise arrivals, e.g. 1,2,5,2,1',
+    )
     parser.add_argument('--policy', choices=('auto-shrink', 'fixed-ratio', 'hybrid-fixed-ratio', 'nonuniform', 'nonuniform-optimal'),
                         help='memory placement policy; defaults to legacy behavior when omitted')
     parser.add_argument('--uniform', action='store_true',
@@ -40,6 +51,10 @@ def main():
     parser.add_argument('--use_shrink', action='store_true', help='use optimization based shrinking')
     parser.add_argument('--use_fastswap', action='store_true', help='use fastswap')
     parser.add_argument('--json-metrics', action='store_true', help='print simulation metrics as JSON')
+    parser.add_argument(
+        '--memory-curve-prefix',
+        help='write memory curve data and plot to <prefix>.tsv and <prefix>.png',
+    )
 
     cmdargs = parser.parse_args()
     if cmdargs.policy is None:
@@ -69,6 +84,12 @@ def main():
     elif policy == 'nonuniform-optimal':
         use_shrink = True
 
+    memory_curve_tsv = None
+    memory_curve_png = None
+    if cmdargs.memory_curve_prefix:
+        memory_curve_tsv = cmdargs.memory_curve_prefix + '.tsv'
+        memory_curve_png = cmdargs.memory_curve_prefix + '.png'
+
     result = simulate(
         cmdargs.seed,
         cmdargs.mem,
@@ -89,6 +110,10 @@ def main():
         use_small_workload=False,
         use_fastswap=cmdargs.use_fastswap,
         return_metrics=cmdargs.json_metrics,
+        arrival_profile=cmdargs.arrival_profile,
+        arrival_weights=None if cmdargs.arrival_weights is None else list(map(float, cmdargs.arrival_weights)),
+        memory_curve_tsv=memory_curve_tsv,
+        memory_curve_png=memory_curve_png,
     )
     if cmdargs.json_metrics:
         print(json.dumps(result))

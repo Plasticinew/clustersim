@@ -74,6 +74,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--tasks-per-trace', type=int, default=200, help='how many tasks each trace contains')
     parser.add_argument('--until', type=int, default=200, help='max arrival time in seconds')
     parser.add_argument(
+        '--arrival-profile',
+        choices=('uniform', 'piecewise'),
+        default='uniform',
+        help='arrival-time distribution passed through to simulation_one_time.py',
+    )
+    parser.add_argument(
+        '--arrival-weights',
+        type=lambda s: s.split(','),
+        help='comma-separated positive bucket weights for piecewise arrivals, e.g. 1,2,5,2,1',
+    )
+    parser.add_argument(
         '--strategy',
         choices=tuple(STRATEGY_TO_POLICY.keys()),
         default='optimal',
@@ -92,6 +103,23 @@ def parse_args() -> argparse.Namespace:
         help='directory for generated traces, commands, and results',
     )
     return parser.parse_args()
+
+
+def normalize_arrival_args(arrival_profile: str, arrival_weights: Sequence[str] | None) -> List[float] | None:
+    if arrival_profile == 'uniform':
+        if arrival_weights is not None:
+            raise ValueError('--arrival-weights can only be used with --arrival-profile piecewise')
+        return None
+
+    if arrival_weights is None:
+        raise ValueError('--arrival-weights is required when --arrival-profile piecewise is used')
+
+    weights = [float(raw_weight) for raw_weight in arrival_weights]
+    if not weights:
+        raise ValueError('--arrival-weights must not be empty')
+    if any(weight <= 0 for weight in weights):
+        raise ValueError('--arrival-weights must all be positive')
+    return weights
 
 
 def normalize_workloads(selected: Sequence[str] | None) -> List[str]:
@@ -134,7 +162,15 @@ def generate_trace(trace_id: int, tasks_per_trace: int, workload_names: Sequence
     )
 
 
-def build_command(trace: RandomTrace, num_servers: int, until: int, policy: str, fastswap: bool) -> List[str]:
+def build_command(
+    trace: RandomTrace,
+    num_servers: int,
+    until: int,
+    policy: str,
+    fastswap: bool,
+    arrival_profile: str,
+    arrival_weights: Sequence[float] | None,
+) -> List[str]:
     command = [
         sys.executable,
         str(REPO_ROOT / 'simulation_one_time.py'),
@@ -158,11 +194,15 @@ def build_command(trace: RandomTrace, num_servers: int, until: int, policy: str,
         str(trace.size),
         '--max_far',
         str(num_servers * REMOTE_MEM_MB),
+        '--arrival-profile',
+        arrival_profile,
         '--policy',
         policy,
         '--min_ratio',
         str(DEFAULT_MIN_RATIO),
     ]
+    if arrival_weights is not None:
+        command.extend(['--arrival-weights', ','.join('{:g}'.format(weight) for weight in arrival_weights)])
     if policy == 'nonuniform-optimal':
         command.append('--use_shrink')
     if fastswap:
@@ -185,19 +225,24 @@ def write_trace_metadata(
     policy: str,
     num_servers: int,
     until: int,
+    arrival_profile: str,
+    arrival_weights: Sequence[float] | None,
 ) -> None:
+    arrival_weights_text = '' if arrival_weights is None else ','.join('{:g}'.format(weight) for weight in arrival_weights)
     with path.open('w') as handle:
         handle.write(
-            'trace_id\tstrategy\tpolicy\ttrace_seed\tsimulation_seed\tnum_servers\tuntil_s\tjobs\t'
+            'trace_id\tstrategy\tpolicy\tarrival_profile\tarrival_weights\ttrace_seed\tsimulation_seed\tnum_servers\tuntil_s\tjobs\t'
             'cpu_per_node\tlocal_mem_mb\tremote_mem_per_node_mb\tworkloads\tratios\tcounts\tsampled_tasks\n'
         )
         for trace in traces:
             handle.write(
-                'trace{idx:03d}\t{strategy}\t{policy}\t{trace_seed}\t{simulation_seed}\t{servers}\t{until}\t{jobs}\t'
+                'trace{idx:03d}\t{strategy}\t{policy}\t{arrival_profile}\t{arrival_weights}\t{trace_seed}\t{simulation_seed}\t{servers}\t{until}\t{jobs}\t'
                 '{cpu}\t{local_mem}\t{remote_mem}\t{workloads}\t{ratios}\t{counts}\t{sampled_tasks}\n'.format(
                     idx=trace.trace_id,
                     strategy=strategy,
                     policy=policy,
+                    arrival_profile=arrival_profile,
+                    arrival_weights=arrival_weights_text,
                     trace_seed=trace.trace_seed,
                     simulation_seed=trace.simulation_seed,
                     servers=num_servers,
@@ -220,6 +265,8 @@ def write_summary(
     policy: str,
     num_traces: int,
     tasks_per_trace: int,
+    arrival_profile: str,
+    arrival_weights: Sequence[float] | None,
     direct_metrics: Sequence[float],
     fast_metrics: Sequence[float],
     ratios: Sequence[float],
@@ -228,18 +275,21 @@ def write_summary(
     direct_wins = sum(1 for winner in winners if winner == 'directswap')
     fast_wins = sum(1 for winner in winners if winner == 'fastswap')
     ties = sum(1 for winner in winners if winner == 'tie')
+    arrival_weights_text = '' if arrival_weights is None else ','.join('{:g}'.format(weight) for weight in arrival_weights)
 
     with path.open('w') as handle:
         handle.write(
-            'strategy\tpolicy\tnum_traces\ttasks_per_trace\tdirectswap_wins\tfastswap_wins\tties\t'
+            'strategy\tpolicy\tarrival_profile\tarrival_weights\tnum_traces\ttasks_per_trace\tdirectswap_wins\tfastswap_wins\tties\t'
             'avg_directswap_makespan\tavg_fastswap_makespan\tavg_fastswap_over_direct\t'
             'median_fastswap_over_direct\tbest_fastswap_over_direct\tworst_fastswap_over_direct\n'
         )
         handle.write(
-            '{strategy}\t{policy}\t{num_traces}\t{tasks_per_trace}\t{direct_wins}\t{fast_wins}\t{ties}\t'
+            '{strategy}\t{policy}\t{arrival_profile}\t{arrival_weights}\t{num_traces}\t{tasks_per_trace}\t{direct_wins}\t{fast_wins}\t{ties}\t'
             '{avg_direct:.6f}\t{avg_fast:.6f}\t{avg_ratio:.6f}\t{median_ratio:.6f}\t{best_ratio:.6f}\t{worst_ratio:.6f}\n'.format(
                 strategy=strategy,
                 policy=policy,
+                arrival_profile=arrival_profile,
+                arrival_weights=arrival_weights_text,
                 num_traces=num_traces,
                 tasks_per_trace=tasks_per_trace,
                 direct_wins=direct_wins,
@@ -261,6 +311,7 @@ def main() -> None:
         raise ValueError('--num-traces must be positive')
     if args.tasks_per_trace <= 0:
         raise ValueError('--tasks-per-trace must be positive')
+    arrival_weights = normalize_arrival_args(args.arrival_profile, args.arrival_weights)
 
     workload_names = normalize_workloads(args.workloads)
     policy = STRATEGY_TO_POLICY[args.strategy]
@@ -284,19 +335,44 @@ def main() -> None:
     fastswap_over_direct_values: List[float] = []
     winners: List[str] = []
 
-    write_trace_metadata(traces_path, traces, args.strategy, policy, args.num_servers, args.until)
+    write_trace_metadata(
+        traces_path,
+        traces,
+        args.strategy,
+        policy,
+        args.num_servers,
+        args.until,
+        args.arrival_profile,
+        arrival_weights,
+    )
 
     with results_path.open('w') as handle:
         handle.write(
-            'trace_id\tstrategy\tpolicy\ttrace_seed\tsimulation_seed\tworkloads\tratios\tjobs\t'
+            'trace_id\tstrategy\tpolicy\tarrival_profile\tarrival_weights\ttrace_seed\tsimulation_seed\tworkloads\tratios\tjobs\t'
             'directswap_makespan\tdirectswap_avg_mem_util\tdirectswap_avg_queue_ms\t'
             'directswap_avg_runtime_slowdown\tfastswap_makespan\tfastswap_avg_mem_util\t'
             'fastswap_avg_queue_ms\tfastswap_avg_runtime_slowdown\tfastswap_over_direct\twinner\n'
         )
 
         for trace in traces:
-            direct_cmd = build_command(trace, args.num_servers, args.until, policy, False)
-            fastswap_cmd = build_command(trace, args.num_servers, args.until, policy, True)
+            direct_cmd = build_command(
+                trace,
+                args.num_servers,
+                args.until,
+                policy,
+                False,
+                args.arrival_profile,
+                arrival_weights,
+            )
+            fastswap_cmd = build_command(
+                trace,
+                args.num_servers,
+                args.until,
+                policy,
+                True,
+                args.arrival_profile,
+                arrival_weights,
+            )
             direct_commands.append(direct_cmd)
             fastswap_commands.append(fastswap_cmd)
 
@@ -314,7 +390,7 @@ def main() -> None:
 
             print(
                 '[trace {idx:03d}/{total:03d}] strategy={strategy} workloads={workloads} ratios={ratios} jobs={jobs} '
-                'direct={direct:.0f} direct_mem_util={direct_mem_util:.2%} '
+                'arrival={arrival_profile} direct={direct:.0f} direct_mem_util={direct_mem_util:.2%} '
                 'fast={fast:.0f} fast_mem_util={fast_mem_util:.2%} fast/direct={ratio:.4f} winner={winner}'.format(
                     idx=trace.trace_id,
                     total=len(traces),
@@ -322,6 +398,7 @@ def main() -> None:
                     workloads=trace.workloads_arg,
                     ratios=trace.ratios_arg,
                     jobs=trace.size,
+                    arrival_profile=args.arrival_profile,
                     direct=direct_makespan,
                     direct_mem_util=direct_metrics['avg_mem_util'],
                     fast=fastswap_makespan,
@@ -332,12 +409,14 @@ def main() -> None:
             )
 
             handle.write(
-                'trace{idx:03d}\t{strategy}\t{policy}\t{trace_seed}\t{simulation_seed}\t{workloads}\t{ratios}\t{jobs}\t'
+                'trace{idx:03d}\t{strategy}\t{policy}\t{arrival_profile}\t{arrival_weights}\t{trace_seed}\t{simulation_seed}\t{workloads}\t{ratios}\t{jobs}\t'
                 '{direct:.6f}\t{direct_mem_util:.6f}\t{direct_queue:.6f}\t{direct_slowdown:.6f}\t'
                 '{fast:.6f}\t{fast_mem_util:.6f}\t{fast_queue:.6f}\t{fast_slowdown:.6f}\t{ratio:.6f}\t{winner}\n'.format(
                     idx=trace.trace_id,
                     strategy=args.strategy,
                     policy=policy,
+                    arrival_profile=args.arrival_profile,
+                    arrival_weights='' if arrival_weights is None else ','.join('{:g}'.format(weight) for weight in arrival_weights),
                     trace_seed=trace.trace_seed,
                     simulation_seed=trace.simulation_seed,
                     workloads=trace.workloads_arg,
@@ -363,6 +442,8 @@ def main() -> None:
         policy,
         args.num_traces,
         args.tasks_per_trace,
+        args.arrival_profile,
+        arrival_weights,
         direct_makespans,
         fastswap_makespans,
         fastswap_over_direct_values,

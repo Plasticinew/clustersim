@@ -30,6 +30,18 @@ Argument            | Description
 ./test.sh 2000 32768 
 ```
 
+It also supports non-uniform arrival traces while keeping the total number of tasks fixed. The default is still uniform arrivals. To create peaks and valleys, use a piecewise arrival profile with bucket weights:
+```
+python3 simulation_one_time.py 1 --num_servers 8 --cpus 32 --mem 65536 --workload xgboost,pagerank,redis --ratios 2:2:1 --workload_ratios 50,50,50 --until 200 --size 200 --arrival-profile piecewise --arrival-weights 1,2,5,2,1
+```
+The example above splits the arrival window into 5 equal-length buckets and makes the middle bucket receive the largest share of arrivals.
+
+To export a memory-over-time curve, pass a prefix path. This writes both `<prefix>.tsv` and `<prefix>.png`:
+```
+python3 simulation_one_time.py 1 --num_servers 8 --cpus 32 --mem 65536 --workload xgboost,pagerank,redis --ratios 2:2:1 --workload_ratios 50,50,50 --until 200 --size 200 --memory-curve-prefix res/memory_curve/example
+```
+The plot contains the actual occupied local memory and the total memory demand of all currently active tasks.
+
 ## `test_1to1.sh`
 `test_1to1.sh` is a directly executable trace test based on `gen_traces.py`. It fixes each compute node at `32 CPUs + 64GB local memory`, sets every workload to a roughly `2:1` local/remote split via `--workload_ratios 66`, and caps Fastswap remote memory at `64GB` per node. The script automatically picks workload mixes that are as close as possible to the per-node total memory limit while keeping CPU demand within the per-node CPU limit, then runs both direct swap and Fastswap with the same traces. It supports `auto-shrink` for dynamic uniform shrink, `fixed-ratio` for a fixed local/remote split from the start, `hybrid-fixed-ratio` for local-first placement that falls back to a fixed split under pressure, and `nonuniform-optimal` for the previous optimized non-uniform scheduler.
 
@@ -69,6 +81,7 @@ Example usage:
 ./test_random_traces.sh --strategy fix
 ./test_random_traces.sh --num-traces 50 --tasks-per-trace 200
 ./test_random_traces.sh --workloads quicksort,redis,llama
+./test_random_traces.sh --arrival-profile piecewise --arrival-weights 1,2,5,2,1
 ```
 ## Questions
 For additional questions please contact us at cfm@lists.eecs.berkeley.edu

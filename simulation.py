@@ -505,7 +505,90 @@ def summarize_jobs(jobs_ts):
     num_jobs = len(jobs_ts)
     return total_queue_time / num_jobs, total_runtime_slowdown / num_jobs
 
-def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, until, return_metrics=False):
+
+def pending_mem_demand(Pending):
+    return sum(workload.ideal_mem for queue in Pending.values() for workload, _ in queue)
+
+
+def record_memory_curve_point(memory_curve_points, timestamp, servers, Pending):
+    running_task_demand = sum(s.alloc_mem for s in servers)
+    local_used = sum(s.get_local_usage() for s in servers)
+    remote_used = sum(s.get_remote_usage() for s in servers)
+    pending_task_demand = pending_mem_demand(Pending)
+    point = {
+        'time_ms': float(timestamp),
+        'time_s': float(timestamp) / 1000.0,
+        'local_used_mem_mb': float(local_used),
+        'remote_used_mem_mb': float(remote_used),
+        'total_used_mem_mb': float(local_used + remote_used),
+        'running_task_demand_mem_mb': float(running_task_demand),
+        'pending_task_demand_mem_mb': float(pending_task_demand),
+        'active_task_demand_mem_mb': float(running_task_demand + pending_task_demand),
+    }
+    if memory_curve_points and abs(memory_curve_points[-1]['time_ms'] - point['time_ms']) < 1e-9:
+        memory_curve_points[-1] = point
+    else:
+        memory_curve_points.append(point)
+
+
+def ensure_parent_dir(path):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
+def write_memory_curve_tsv(path, memory_curve_points):
+    ensure_parent_dir(path)
+    with open(path, 'w') as handle:
+        handle.write(
+            'time_ms\ttime_s\tlocal_used_mem_mb\tremote_used_mem_mb\ttotal_used_mem_mb\t'
+            'running_task_demand_mem_mb\tpending_task_demand_mem_mb\tactive_task_demand_mem_mb\n'
+        )
+        for point in memory_curve_points:
+            handle.write(
+                '{time_ms:.6f}\t{time_s:.6f}\t{local_used_mem_mb:.6f}\t{remote_used_mem_mb:.6f}\t{total_used_mem_mb:.6f}\t'
+                '{running_task_demand_mem_mb:.6f}\t{pending_task_demand_mem_mb:.6f}\t{active_task_demand_mem_mb:.6f}\n'.format(
+                    **point
+                )
+            )
+
+
+def plot_memory_curve(path, memory_curve_points):
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise RuntimeError('matplotlib is required to plot the memory curve') from exc
+
+    ensure_parent_dir(path)
+    times = [point['time_s'] for point in memory_curve_points]
+    local_used = [point['local_used_mem_mb'] for point in memory_curve_points]
+    active_demand = [point['active_task_demand_mem_mb'] for point in memory_curve_points]
+
+    plt.figure(figsize=(10, 5))
+    plt.step(times, local_used, where='post', linewidth=2.5, label='Actual occupied local memory')
+    plt.step(times, active_demand, where='post', linewidth=2.5, label='Current task total memory demand')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Memory (MB)')
+    plt.title('Memory Curve Over Time')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(path)
+    plt.close()
+
+
+def schedule(
+    servers,
+    L,
+    workload_ratios,
+    max_far_mem,
+    jobs_ts,
+    use_fastswap,
+    until,
+    return_metrics=False,
+    memory_curve_tsv=None,
+    memory_curve_png=None,
+):
     Pending = dict() #key is wname, value is a list of workloads and timestamp of that name in pending
     global cur_time
     default_seq = list(range(len(servers)))
@@ -528,6 +611,10 @@ def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, un
     last_sample_time = 0
     total_mem_time = 0.0
     remote_mem_time = 0.0
+    memory_curve_points = [] if (memory_curve_tsv or memory_curve_png) else None
+
+    if memory_curve_points is not None:
+        record_memory_curve_point(memory_curve_points, 0, servers, Pending)
 
     def accumulate_usage(next_time):
         nonlocal last_sample_time
@@ -567,12 +654,16 @@ def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, un
                 else:
                     my_print("job {} can't fit".format(workload.get_name()))
                     Pending[workload.wname].append((workload,cur_time))
+                if memory_curve_points is not None:
+                    record_memory_curve_point(memory_curve_points, cur_time, servers, Pending)
             else: # end node
                 next_time = L.get_next_time()
                 old_idd = event.idd
                 old_s = servers[event.sid]
                 old_s.finish_job(old_idd) # finish job will update resource
                 jobs_ts[old_idd]['finish'] = cur_time
+                if memory_curve_points is not None:
+                    record_memory_curve_point(memory_curve_points, cur_time, servers, Pending)
                 ids = [] # sid's that have been updated
                 s, new_workload = find_new_workload(servers, Pending, max_far_mem, server_seq)
                 while new_workload:
@@ -587,9 +678,13 @@ def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, un
                     jobs_ts[new_workload.idd]['exec'] = cur_time
                     update_server_seq(default_seq,server_seq)
                     ids.append(s.sid)
+                    if memory_curve_points is not None:
+                        record_memory_curve_point(memory_curve_points, cur_time, servers, Pending)
                     s, new_workload = find_new_workload(servers, Pending, max_far_mem, server_seq)
                 if not (old_s.sid in ids): # only when it has not been updated
                     old_s.fill_job(None)
+                    if memory_curve_points is not None:
+                        record_memory_curve_point(memory_curve_points, cur_time, servers, Pending)
             
             prev_time_second = cur_time_second
             prev_remote_mem_useage = 0
@@ -618,6 +713,13 @@ def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, un
         total_pending += len(v)
     assert total_pending == 0
 
+    if memory_curve_points is not None:
+        record_memory_curve_point(memory_curve_points, cur_time, servers, Pending)
+        if memory_curve_tsv:
+            write_memory_curve_tsv(memory_curve_tsv, memory_curve_points)
+        if memory_curve_png:
+            plot_memory_curve(memory_curve_png, memory_curve_points)
+
     if return_metrics:
         return {
             'makespan': makespan,
@@ -628,13 +730,33 @@ def schedule(servers, L, workload_ratios, max_far_mem, jobs_ts, use_fastswap, un
         }
     return makespan
 
-def get_schedule(size, max_arrival, workloads, ratios, jobs_ts):
+def sample_arrival_time(max_arrival, arrival_profile, arrival_weights):
+    if arrival_profile == 'uniform':
+        return random.uniform(0, max_arrival)
+
+    if arrival_profile != 'piecewise':
+        raise ValueError('unknown arrival profile: {}'.format(arrival_profile))
+
+    if not arrival_weights:
+        raise ValueError('piecewise arrival profile requires arrival_weights')
+
+    if any(weight <= 0 for weight in arrival_weights):
+        raise ValueError('arrival_weights must all be positive')
+
+    num_bins = len(arrival_weights)
+    bin_index = random.choices(range(num_bins), weights=arrival_weights, k=1)[0]
+    left = max_arrival * bin_index / num_bins
+    right = max_arrival * (bin_index + 1) / num_bins
+    return random.uniform(left, right)
+
+
+def get_schedule(size, max_arrival, workloads, ratios, jobs_ts, arrival_profile='uniform', arrival_weights=None):
     L = Schedule()
     wid = 0
     def add_workload(name):
         nonlocal wid
         nonlocal jobs_ts
-        ts = random.uniform(0, max_arrival) # uniform
+        ts = sample_arrival_time(max_arrival, arrival_profile, arrival_weights)
         L.add_event(ts, 0, name, wid, True) # sid doesn't matter for start nodes, set when scheduled
         assert wid not in jobs_ts
         jobs_ts[wid] = {'arrival': ts, 'exec': 0, 'finish': 0, 'workload': name}
@@ -652,7 +774,7 @@ def get_schedule(size, max_arrival, workloads, ratios, jobs_ts):
     return L
 
 
-def simulate(seed, mem, size, until, ratios, workload, cpus, num_servers, remotemem, workload_ratios, max_far=0, use_shrink=False, uniform=False, fixed_ratio_policy=False, hybrid_fixed_ratio_policy=False, min_ratio=None, use_small_workload=False, use_fastswap=False, return_metrics=False):
+def simulate(seed, mem, size, until, ratios, workload, cpus, num_servers, remotemem, workload_ratios, max_far=0, use_shrink=False, uniform=False, fixed_ratio_policy=False, hybrid_fixed_ratio_policy=False, min_ratio=None, use_small_workload=False, use_fastswap=False, return_metrics=False, arrival_profile='uniform', arrival_weights=None, memory_curve_tsv=None, memory_curve_png=None):
     global workloads
     if use_small_workload:
         import workloads_small as workloads
@@ -684,13 +806,24 @@ def simulate(seed, mem, size, until, ratios, workload, cpus, num_servers, remote
     # Instantiate Servers
     random.seed(seed)
     jobs_ts = {}
-    L = get_schedule(size, until, workload, ratios, jobs_ts)
+    L = get_schedule(size, until, workload, ratios, jobs_ts, arrival_profile=arrival_profile, arrival_weights=arrival_weights)
     servers = []
     for sid in range(num_servers):
         servers.append(Server(sid, L, remotemem, cpus, mem,
                               uniform, fixed_ratio_policy, hybrid_fixed_ratio_policy, use_fastswap, min_ratio, workload_ratios, reclamation_cpus, max_far/num_servers))
     try:
-        return schedule(servers, L, workload_ratios, max_far, jobs_ts, use_fastswap, until, return_metrics=return_metrics)
+        return schedule(
+            servers,
+            L,
+            workload_ratios,
+            max_far,
+            jobs_ts,
+            use_fastswap,
+            until,
+            return_metrics=return_metrics,
+            memory_curve_tsv=memory_curve_tsv,
+            memory_curve_png=memory_curve_png,
+        )
     except KeyboardInterrupt:
         for s in servers[:]:
             del s
